@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>生活不止眼前的苟且 - 沉浸式播放器</title>
+    <!-- 引入 Tailwind CSS 进行快速排版 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Phosphor Icons 作为播放器图标 -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <style>
+        :root {
+            --primary-text: #ffffff;
+            --secondary-text: rgba(255, 255, 255, 0.4);
+            --accent-color: #ffffff;
+            --bg-overlay: rgba(0, 0, 0, 0.4);
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+            background-color: #000;
+            color: var(--primary-text);
+            overflow: hidden; /* 防止整个页面滚动 */
+            height: 100vh;
+            height: 100dvh;
+            user-select: none;
+        }
+
+        /* 动态模糊背景 */
+        .ambient-bg {
+            position: fixed;
+            top: -10%;
+            left: -10%;
+            width: 120%;
+            height: 120%;
+            background-image: url('https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?q=80&w=1200&auto=format&fit=crop');
+            background-size: cover;
+            background-position: center;
+            filter: blur(80px) saturate(150%) brightness(0.7);
+            z-index: -2;
+            transform: scale(1.1);
+            animation: pulse-bg 20s infinite alternate ease-in-out;
+        }
+
+        /* 背景渐变遮罩层，增加纵深感 */
+        .ambient-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.2) 0%, rgba(0,0,0,0.6) 100%);
+            z-index: -1;
+        }
+
+        @keyframes pulse-bg {
+            0% { transform: scale(1.1) translate(0, 0); }
+            100% { transform: scale(1.2) translate(-2%, 2%); }
+        }
+
+        /* 隐藏滚动条但保留滚动功能 */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+
+        /* 专辑封面阴影与动效 */
+        .album-art {
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+            transition: transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+        .album-art.playing {
+            transform: scale(1.02);
+        }
+
+        /* 进度条定制 */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+            height: 6px;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        input[type=range]:focus {
+            outline: none;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 6px;
+            cursor: pointer;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            height: 14px;
+            width: 14px;
+            border-radius: 50%;
+            background: #ffffff;
+            cursor: pointer;
+            -webkit-appearance: none;
+            margin-top: -4px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+            transition: transform 0.1s;
+        }
+        input[type=range]::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+        }
+        /* 动态填充进度条背景 (通过JS更新CSS变量) */
+        .progress-bar {
+            background: linear-gradient(to right, #fff var(--progress), rgba(255,255,255,0.2) var(--progress));
+        }
+
+        /* 歌词样式 */
+        .lyric-line {
+            transition: all 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+            transform-origin: left center;
+            opacity: 0.3;
+            transform: scale(0.95);
+            filter: blur(1px);
+            padding: 10px 0;
+            cursor: pointer;
+        }
+        
+        .lyric-line:hover {
+            opacity: 0.6;
+        }
+
+        /* 当前播放的歌词高亮 */
+        .lyric-line.active {
+            opacity: 1;
+            transform: scale(1.05);
+            filter: blur(0px);
+            color: #ffffff;
+            text-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+
+        /* 移动端适配 */
+        @media (max-width: 768px) {
+            .lyric-line {
+                transform-origin: center center;
+                text-align: center;
+                font-size: 1.5rem !important;
+            }
+            .lyric-line.active {
+                transform: scale(1.1);
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 背景层 -->
+    <div class="ambient-bg"></div>
+    <div class="ambient-overlay"></div>
+
+    <!-- 主体容器 -->
+    <div class="w-full h-full flex flex-col md:flex-row p-6 md:p-12 gap-8 md:gap-16 max-w-7xl mx-auto items-center justify-center relative">
+        
+        <!-- 左侧：播放器控制区 -->
+        <div class="w-full md:w-5/12 flex flex-col items-center md:items-start z-10">
+            <!-- 专辑封面 -->
+            <div class="w-64 h-64 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-2xl overflow-hidden album-art mb-8" id="album-cover">
+                <img src="img.png" alt="生活不止眼前的苟且" class="w-full h-full object-cover">
+            </div>
+
+            <!-- 歌曲信息 -->
+            <div class="text-center md:text-left w-full mb-6">
+                <h1 class="text-2xl md:text-3xl font-bold mb-2 tracking-wide">生活不止眼前的苟且</h1>
+                <h2 class="text-lg md:text-xl text-white/60 font-medium">许巍</h2>
+            </div>
+
+            <!-- 进度条区 -->
+            <div class="w-full mb-6">
+                <input type="range" id="seek-bar" class="progress-bar w-full" min="0" max="100" value="0" step="0.1" style="--progress: 0%">
+                <div class="flex justify-between text-xs text-white/50 mt-2 font-mono">
+                    <span id="current-time">0:00</span>
+                    <span id="total-time">4:40</span>
+                </div>
+            </div>
+
+            <!-- 控制按钮 -->
+            <div class="flex items-center justify-center md:justify-start gap-8 w-full">
+                <button class="text-white/70 hover:text-white transition" id="btn-shuffle">
+                    <i class="ph ph-shuffle text-2xl"></i>
+                </button>
+                <button class="text-white hover:scale-110 transition">
+                    <i class="ph-fill ph-skip-back text-4xl"></i>
+                </button>
+                <button class="w-16 h-16 bg-white rounded-full flex items-center justify-center text-black hover:scale-105 transition shadow-lg shadow-white/20" id="btn-play">
+                    <i class="ph-fill ph-play text-3xl ml-1" id="play-icon"></i>
+                </button>
+                <button class="text-white hover:scale-110 transition">
+                    <i class="ph-fill ph-skip-forward text-4xl"></i>
+                </button>
+                <button class="text-white/70 hover:text-white transition">
+                    <i class="ph ph-repeat text-2xl"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- 右侧：沉浸式滚动歌词区 -->
+        <div class="w-full md:w-7/12 h-[50vh] md:h-[80vh] overflow-y-auto no-scrollbar relative mask-image-y" id="lyrics-container">
+            <!-- 占位空间，让第一句歌词能居中 -->
+            <div class="h-[30vh] md:h-[40vh]"></div>
+            
+            <div id="lyrics-content" class="flex flex-col gap-4 md:gap-6 pb-[40vh]">
+                <!-- 歌词将通过 JS 动态渲染到这里 -->
+            </div>
+        </div>
+
+    </div>
+    
+    <!-- 引入真实的音频文件 -->
+    <audio id="audio-player" src="music.mp3" preload="metadata"></audio>
+
+    <script>
+        // LRC 格式歌词数据
+        const lrcData = `
+[00:00.00]生活不止眼前的苟且 - 许巍
+[00:09.98]词：高晓松
+[00:19.97]曲：高晓松
+[00:29.95]妈妈坐在门前 哼着花儿与少年
+[00:36.13]虽已时隔多年 记得她泪水涟涟
+[00:42.66]那些幽暗的时光 那些坚持与慌张
+[00:48.83]在临别的门前 妈妈望着我说
+[00:58.31]生活不止眼前的苟且
+[01:04.76]还有诗和远方的田野
+[01:10.92]你赤手空拳来到人世间
+[01:17.28]为找到那片海不顾一切
+[01:52.11]她坐在我对面 低头说珍重再见
+[01:58.42]虽已时隔多年 记得她泪水涟涟
+[02:04.69]那些欢笑的时光 那些誓言与梦想
+[02:10.89]在分手的街边 她紧抱住我说
+[02:20.39]生活不止眼前的苟且
+[02:26.71]还有诗和远方的田野
+[02:33.01]你赤手空拳来到人世间
+[02:39.27]为找到那片海不顾一切
+[02:49.00]我独自渐行渐远 膝下多了个少年
+[02:55.13]少年一天天长大 有一天要离开家
+[03:01.53]看他背影的成长 看他坚持与回望
+[03:07.66]我知道有一天 我会笑着对他说
+[03:20.50]生活不止眼前的苟且
+[03:26.77]还有诗和远方的田野
+[03:33.00]你赤手空拳来到人世间
+[03:39.26]为找到那片海不顾一切
+[03:45.61]生活不止眼前的苟且
+[03:51.96]还有诗和远方的田野
+[03:58.25]你赤手空拳来到人世间
+[04:04.65]为找到那片海不顾一切
+[04:10.98]生活不止眼前的苟且
+[04:17.21]还有诗和远方的田野
+[04:23.55]你赤手空拳来到人世间
+[04:29.81]为找到那片海不顾一切
+[04:36.18]生活不止眼前的苟且
+[04:42.48]还有诗和远方的田野
+[04:48.80]你赤手空拳来到人世间
+[04:55.13]为找到那片海不顾一切
+        `;
+
+        // 状态管理
+        let state = {
+            isPlaying: false,
+            currentTime: 0,
+            duration: 0, // 将通过音频元数据加载
+            activeLineIndex: -1,
+            lyrics: []
+        };
+
+        // DOM 元素引用
+        const elements = {
+            playBtn: document.getElementById('btn-play'),
+            playIcon: document.getElementById('play-icon'),
+            seekBar: document.getElementById('seek-bar'),
+            currentTimeDisp: document.getElementById('current-time'),
+            totalTimeDisp: document.getElementById('total-time'),
+            lyricsContent: document.getElementById('lyrics-content'),
+            lyricsContainer: document.getElementById('lyrics-container'),
+            albumCover: document.getElementById('album-cover'),
+            audio: document.getElementById('audio-player')
+        };
+
+        let isUserSeeking = false;
+
+        // 错误提示辅助函数
+        function showErrorMsg() {
+            let existing = document.getElementById('audio-error');
+            if (existing) return;
+            const errorMsg = document.createElement('div');
+            errorMsg.id = 'audio-error';
+            errorMsg.className = "absolute top-10 left-1/2 transform -translate-x-1/2 bg-red-500 text-white px-6 py-3 rounded-full shadow-2xl z-50 text-sm font-medium transition-all duration-300";
+            errorMsg.innerText = "播放失败：未找到本地音频 music.mp3";
+            document.body.appendChild(errorMsg);
+            setTimeout(() => errorMsg.remove(), 4000);
+        }
+
+        // 1. 解析 LRC 歌词
+        function parseLRC(lrc) {
+            const lines = lrc.split('\n');
+            const parsed = [];
+            const timeRegex = /\[(\d{2}):(\d{2})\.(\d{2})\]/;
+
+            lines.forEach(line => {
+                const match = timeRegex.exec(line);
+                if (match) {
+                    const minutes = parseInt(match[1]);
+                    const seconds = parseInt(match[2]);
+                    const milliseconds = parseInt(match[3]);
+                    const timeInSeconds = minutes * 60 + seconds + milliseconds / 100;
+                    const text = line.replace(timeRegex, '').trim();
+                    if (text) {
+                        parsed.push({ time: timeInSeconds, text: text });
+                    }
+                }
+            });
+            return parsed;
+        }
+
+        // 2. 渲染歌词到 DOM
+        function renderLyrics() {
+            elements.lyricsContent.innerHTML = '';
+            state.lyrics.forEach((line, index) => {
+                const p = document.createElement('p');
+                p.className = 'lyric-line text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight';
+                p.innerText = line.text;
+                p.id = `lyric-${index}`;
+                
+                // 点击歌词跳转
+                p.onclick = () => {
+                    try {
+                        elements.audio.currentTime = line.time;
+                        if(elements.audio.paused) togglePlay();
+                    } catch (err) {
+                        console.warn("跳转失败:", err);
+                        showErrorMsg();
+                    }
+                };
+                
+                elements.lyricsContent.appendChild(p);
+            });
+        }
+
+        // 3. 时间格式化辅助函数
+        function formatTime(seconds) {
+            if (isNaN(seconds)) return "0:00";
+            const m = Math.floor(seconds / 60);
+            const s = Math.floor(seconds % 60);
+            return `${m}:${s < 10 ? '0' : ''}${s}`;
+        }
+
+        // 4. 更新播放器UI与歌词同步
+        function updatePlayerUI() {
+            elements.currentTimeDisp.innerText = formatTime(state.currentTime);
+            if (!isUserSeeking && state.duration > 0) {
+                const progress = (state.currentTime / state.duration) * 100;
+                elements.seekBar.value = progress;
+                elements.seekBar.style.setProperty('--progress', `${progress}%`);
+            }
+
+            let newActiveIndex = -1;
+            for (let i = 0; i < state.lyrics.length; i++) {
+                // 歌词提前 0.2 秒高亮，让视觉和听觉更贴合
+                if (state.currentTime + 0.2 >= state.lyrics[i].time) {
+                    newActiveIndex = i;
+                } else {
+                    break;
+                }
+            }
+
+            if (newActiveIndex !== state.activeLineIndex && newActiveIndex !== -1) {
+                if (state.activeLineIndex !== -1) {
+                    const oldEl = document.getElementById(`lyric-${state.activeLineIndex}`);
+                    if (oldEl) oldEl.classList.remove('active');
+                }
+                
+                state.activeLineIndex = newActiveIndex;
+                const newEl = document.getElementById(`lyric-${newActiveIndex}`);
+                if (newEl) {
+                    newEl.classList.add('active');
+                    
+                    const container = elements.lyricsContainer;
+                    const offsetTop = newEl.offsetTop;
+                    const containerHalfHeight = container.clientHeight / 2;
+                    const elementHalfHeight = newEl.clientHeight / 2;
+                    
+                    container.scrollTo({
+                        top: offsetTop - containerHalfHeight + elementHalfHeight,
+                        behavior: 'smooth'
+                    });
+                }
+            }
+        }
+
+        // 5. 播放控制逻辑 (真实音频引擎)
+        function togglePlay() {
+            if (elements.audio.paused) {
+                const playPromise = elements.audio.play();
+                if (playPromise !== undefined) {
+                    playPromise.then(() => {
+                        elements.playIcon.classList.replace('ph-play', 'ph-pause');
+                        elements.albumCover.classList.add('playing');
+                        state.isPlaying = true;
+                    }).catch(error => {
+                        console.error("Audio playback failed:", error);
+                        showErrorMsg();
+                        // 播放失败时，恢复暂停的 UI 状态
+                        elements.playIcon.classList.replace('ph-pause', 'ph-play');
+                        elements.albumCover.classList.remove('playing');
+                        state.isPlaying = false;
+                    });
+                }
+            } else {
+                elements.audio.pause();
+                elements.playIcon.classList.replace('ph-pause', 'ph-play');
+                elements.albumCover.classList.remove('playing');
+                state.isPlaying = false;
+            }
+        }
+
+        // 6. 事件监听绑定
+        function bindEvents() {
+            elements.playBtn.addEventListener('click', togglePlay);
+
+            // 监听音频加载错误
+            elements.audio.addEventListener('error', (e) => {
+                console.error("Audio error:", e);
+            });
+
+            // 音频加载元数据（获取总时长）
+            elements.audio.addEventListener('loadedmetadata', () => {
+                state.duration = elements.audio.duration;
+                elements.totalTimeDisp.innerText = formatTime(state.duration);
+            });
+
+            // 音频时间更新（核心同步逻辑）
+            elements.audio.addEventListener('timeupdate', () => {
+                if (!isUserSeeking) {
+                    state.currentTime = elements.audio.currentTime;
+                    updatePlayerUI();
+                }
+            });
+
+            // 音频播放结束
+            elements.audio.addEventListener('ended', () => {
+                elements.playIcon.classList.replace('ph-pause', 'ph-play');
+                elements.albumCover.classList.remove('playing');
+                state.isPlaying = false;
+                state.currentTime = 0;
+                elements.audio.currentTime = 0;
+                updatePlayerUI();
+            });
+
+            // 进度条拖动事件
+            elements.seekBar.addEventListener('input', (e) => {
+                isUserSeeking = true;
+                const progress = e.target.value;
+                elements.seekBar.style.setProperty('--progress', `${progress}%`);
+                if (state.duration > 0) {
+                    state.currentTime = (progress / 100) * state.duration;
+                    elements.currentTimeDisp.innerText = formatTime(state.currentTime);
+                    updatePlayerUI();
+                }
+            });
+
+            // 进度条释放（改变音频进度）
+            elements.seekBar.addEventListener('change', (e) => {
+                isUserSeeking = false;
+                if (state.duration > 0) {
+                    const progress = e.target.value;
+                    try {
+                        elements.audio.currentTime = (progress / 100) * state.duration;
+                    } catch (err) {
+                        console.warn("Seek failed:", err);
+                        showErrorMsg();
+                    }
+                } else {
+                    showErrorMsg();
+                }
+            });
+            
+            document.getElementById('btn-shuffle').addEventListener('click', function() {
+                this.classList.toggle('text-accent-color');
+                this.style.color = this.style.color === 'rgb(255, 45, 85)' ? '' : '#ff2d55';
+            });
+        }
+
+        // 7. 初始化应用
+        function init() {
+            state.lyrics = parseLRC(lrcData);
+            elements.seekBar.max = 100;
+            renderLyrics();
+            bindEvents();
+            
+            elements.lyricsContainer.style.webkitMaskImage = 'linear-gradient(to bottom, transparent 0%, black 20%, black 80%, transparent 100%)';
+            elements.lyricsContainer.style.maskImage = 'linear-gradient(to bottom, transparent 0%, black 20%, black 80%, transparent 100%)';
+        }
+
+        window.onload = init;
+
+    </script>
+</body>
+</html>
